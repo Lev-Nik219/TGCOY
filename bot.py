@@ -21,6 +21,14 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
+# ==================== КОНФИГУРАЦИЯ ====================
+BOT_TOKEN = "8983461211:AAFvT-AVltZNKQLEPy3TD0BsMHeEol3IRcE"
+ADMIN_IDS = [5432126918]
+
+# CryptoBot API (для реальных выплат)
+CRYPTOBOT_API_KEY = "588567:AAef3E1a3WIHR1FQaY3OJhzs1T30kwWRRxp"
+CRYPTOBOT_API_URL = "https://pay.crypt.bot/api"
+
 REFERRAL_BONUS_LEVELS = [0.07, 0.03, 0.01]
 MIN_DEPOSIT = 10.0
 MAX_DEPOSIT = 10000.0
