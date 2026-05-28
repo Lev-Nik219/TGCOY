@@ -21,18 +21,20 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# ==================== КОНФИГУРАЦИЯ ====================
-BOT_TOKEN = "8983461211:AAFvT-AVltZNKQLEPy3TD0BsMHeEol3IRcE"
-ADMIN_IDS = [5432126918]
+# ==================== КОНФИГУРАЦИЯ (ЗАМЕНИТЕ НА RENDER) ====================
+# Эти переменные нужно будет добавить в Environment Variables на Render:
+# BOT_TOKEN, ADMIN_IDS, CRYPTOBOT_API_KEY
 
-# CryptoBot API (для реальных выплат)
-CRYPTOBOT_API_KEY = "588567:AAef3E1a3WIHR1FQaY3OJhzs1T30kwWRRxp"
-CRYPTOBOT_API_URL = "https://pay.crypt.bot/api"
+import os
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "123456789").split(",")] if os.getenv("ADMIN_IDS") else [123456789]
+CRYPTOBOT_API_KEY = os.getenv("CRYPTOBOT_API_KEY", "")
 
-REFERRAL_BONUS_LEVELS = [0.07, 0.03, 0.01]
+# Настройки бота (можно менять)
+REFERRAL_BONUS_LEVELS = [0.07, 0.03, 0.01]  # 7%, 3%, 1%
 MIN_DEPOSIT = 10.0
 MAX_DEPOSIT = 10000.0
-WITHDRAW_FEE = 0.02
+WITHDRAW_FEE = 0.02  # 2%
 MIN_WITHDRAW = 5.0
 
 INVEST_PACKAGES = {
@@ -112,7 +114,9 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        conn.commit()
+
+
+    conn.commit()
     print("✅ База данных инициализирована")
 
 def user_exists(user_id: int) -> bool:
@@ -210,10 +214,7 @@ def create_investment(user_id: int, amount: float, package_days: int):
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO investments (user_id, amount, package_days, daily_percent, end_date)
-            VALUES (?,
-
-
-?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?)
         """, (user_id, amount, package_days, package["percent"], end_date))
         if package["bonus"] > 0:
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (package["bonus"], user_id))
@@ -292,7 +293,10 @@ async def process_name(message: Message, state: FSMContext):
         return
     await state.update_data(name=message.text.strip())
     await message.answer("Введите фамилию:")
-    await state.set_state(RegisterStates.surname)
+    await state.set_state(
+
+
+RegisterStates.surname)
 
 @router.message(RegisterStates.surname, F.text)
 async def process_surname(message: Message, state: FSMContext):
@@ -475,12 +479,18 @@ async def daily_task(bot: Bot):
 
 async def main():
     logging.basicConfig(level=logging.INFO)
+    
+    if not BOT_TOKEN:
+        print("❌ ОШИБКА: BOT_TOKEN не установлен! Добавьте переменную окружения BOT_TOKEN на Render.")
+        return
+    
     init_db()
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
     asyncio.create_task(daily_task(bot))
-    print("Бот запущен!")
+    print("🚀 Бот запущен!")
+    print(f"👑 Администраторы: {ADMIN_IDS}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
