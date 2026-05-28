@@ -9,6 +9,7 @@ import sqlite3
 import hashlib
 import requests
 import json
+import os
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 from contextlib import closing
@@ -21,20 +22,15 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# ==================== КОНФИГУРАЦИЯ (ЗАМЕНИТЕ НА RENDER) ====================
-# Эти переменные нужно будет добавить в Environment Variables на Render:
-# BOT_TOKEN, ADMIN_IDS, CRYPTOBOT_API_KEY
-
-import os
+# ==================== КОНФИГУРАЦИЯ ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "123456789").split(",")] if os.getenv("ADMIN_IDS") else [123456789]
 CRYPTOBOT_API_KEY = os.getenv("CRYPTOBOT_API_KEY", "")
 
-# Настройки бота (можно менять)
-REFERRAL_BONUS_LEVELS = [0.07, 0.03, 0.01]  # 7%, 3%, 1%
+REFERRAL_BONUS_LEVELS = [0.07, 0.03, 0.01]
 MIN_DEPOSIT = 10.0
 MAX_DEPOSIT = 10000.0
-WITHDRAW_FEE = 0.02  # 2%
+WITHDRAW_FEE = 0.02
 MIN_WITHDRAW = 5.0
 
 INVEST_PACKAGES = {
@@ -45,194 +41,214 @@ INVEST_PACKAGES = {
 
 DB_NAME = "finance_bot.db"
 
-# ==================== БАЗА ДАННЫХ ====================
+# ==================== БАЗА ДАННЫХ (ИСПРАВЛЕНО) ====================
 def init_db():
-    with closing(sqlite3.connect(DB_NAME)) as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                name TEXT,
-                surname TEXT,
-                age INTEGER,
-                balance REAL DEFAULT 0,
-                referrer_id INTEGER DEFAULT NULL,
-                registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_daily TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                device_fingerprint TEXT UNIQUE,
-                total_deposits REAL DEFAULT 0,
-                total_withdraws REAL DEFAULT 0
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS investments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                amount REAL,
-                package_days INTEGER,
-                daily_percent REAL,
-                start_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                end_date TIMESTAMP,
-                status TEXT DEFAULT 'active'
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                amount REAL,
-                type TEXT,
-                status TEXT DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS withdraws (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                amount REAL,
-                wallet TEXT,
-                crypto_type TEXT DEFAULT 'USDT',
-                status TEXT DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS referrals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                referrer_id INTEGER,
-                referred_id INTEGER,
-                level INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS devices (
-                fingerprint TEXT PRIMARY KEY,
-                user_id INTEGER,
-                blocked BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-
+    """Создаёт таблицы если их нет"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            name TEXT,
+            surname TEXT,
+            age INTEGER,
+            balance REAL DEFAULT 0,
+            referrer_id INTEGER DEFAULT NULL,
+            registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_daily TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            device_fingerprint TEXT UNIQUE,
+            total_deposits REAL DEFAULT 0,
+            total_withdraws REAL DEFAULT 0
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS investments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            amount REAL,
+            package_days INTEGER,
+            daily_percent REAL,
+            start_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            end_date TIMESTAMP,
+            status TEXT DEFAULT 'active'
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            amount REAL,
+            type TEXT,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS withdraws (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            amount REAL,
+            wallet TEXT,
+            crypto_type TEXT DEFAULT 'USDT',
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS referrals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            referrer_id INTEGER,
+            referred_id INTEGER,
+            level INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS devices (
+            fingerprint TEXT PRIMARY KEY,
+            user_id INTEGER,
+            blocked BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
     conn.commit()
+    conn.close()
     print("✅ База данных инициализирована")
 
 def user_exists(user_id: int) -> bool:
-    with closing(sqlite3.connect(DB_NAME)) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
-        return cursor.fetchone() is not None
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result is not None
 
 def get_user(user_id: int) -> Optional[Dict[str, Any]]:
-    with closing(sqlite3.connect(DB_NAME)) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT name, surname, age, balance, referrer_id, last_daily FROM users WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
-        if row:
-            return {
-                "name": row[0],
-                "surname": row[1],
-                "age": row[2],
-                "balance": row[3],
-                "referrer_id": row[4],
-                "last_daily": row[5]
-            }
-        return None
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT name, surname, age, balance, referrer_id, last_daily FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {
+            "name": row[0],
+            "surname": row[1],
+            "age": row[2],
+            "balance": row[3],
+            "referrer_id": row[4],
+            "last_daily": row[5]
+        }
+    return None
 
 def add_user(user_id: int, name: str, surname: str, age: int, referrer_id: int = None, fingerprint: str = ""):
-    with closing(sqlite3.connect(DB_NAME)) as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO users (user_id, name, surname, age, referrer_id, device_fingerprint)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (user_id, name, surname, age, referrer_id, fingerprint))
-        conn.commit()
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO users (user_id, name, surname, age, referrer_id, device_fingerprint)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (user_id, name, surname, age, referrer_id, fingerprint))
+    conn.commit()
+    conn.close()
 
 def update_balance(user_id: int, amount: float, tx_type: str = "manual"):
-    with closing(sqlite3.connect(DB_NAME)) as conn:
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
-        cursor.execute("""
-            INSERT INTO transactions (user_id, amount, type, status)
-            VALUES (?, ?, ?, 'completed')
-        """, (user_id, amount, tx_type))
-        conn.commit()
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+    cursor.execute("""
+        INSERT INTO transactions (user_id, amount, type, status)
+        VALUES (?, ?, ?, 'completed')
+    """, (user_id, amount, tx_type))
+    conn.commit()
+    conn.close()
 
 def get_all_users() -> list:
-    with closing(sqlite3.connect(DB_NAME)) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id, name, balance FROM users")
-        return cursor.fetchall()
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, name, balance FROM users")
+    result = cursor.fetchall()
+    conn.close()
+    return result
 
 def get_device_fingerprint(message: Message) -> str:
     data = f"{message.from_user.id}_{message.from_user.username}_{message.from_user.language_code}"
     return hashlib.sha256(data.encode()).hexdigest()
 
 def is_multiacccount(fingerprint: str, user_id: int) -> bool:
-    with closing(sqlite3.connect(DB_NAME)) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id, blocked FROM devices WHERE fingerprint = ?", (fingerprint,))
-        result = cursor.fetchone()
-        if result:
-            existing_user_id, blocked = result
-            if existing_user_id != user_id:
-                if not blocked:
-                    cursor.execute("UPDATE devices SET blocked = TRUE WHERE fingerprint = ?", (fingerprint,))
-                    conn.commit()
-                return True
-        else:
-            cursor.execute("INSERT INTO devices (fingerprint, user_id) VALUES (?, ?)", (fingerprint, user_id))
-            conn.commit()
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, blocked FROM devices WHERE fingerprint = ?", (fingerprint,))
+    result = cursor.fetchone()
+    if result:
+        existing_user_id, blocked = result
+        if existing_user_id != user_id:
+            if not blocked:
+                cursor.execute("UPDATE devices SET blocked = TRUE WHERE fingerprint = ?", (fingerprint,))
+                conn.commit()
+            conn.close()
+            return True
+    else:
+        cursor.execute("INSERT INTO devices (fingerprint, user_id) VALUES (?, ?)", (fingerprint, user_id))
+        conn.commit()
+    conn.close()
     return False
 
 def process_referral_chain(user_id: int, amount: float):
-    with closing(sqlite3.connect(DB_NAME)) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT referrer_id FROM users WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
-        if not row:
-            return
-        referrer_id = row[0]
-        level = 1
-        while referrer_id and level <= 3:
-            bonus = amount * REFERRAL_BONUS_LEVELS[level - 1]
-            if bonus > 0:
-                cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (bonus, referrer_id))
-                cursor.execute("INSERT INTO transactions (user_id, amount, type, status) VALUES (?, ?, 'referral_bonus', 'completed')", (referrer_id, bonus))
-            cursor.execute("SELECT referrer_id FROM users WHERE user_id = ?", (referrer_id,))
-            row2 = cursor.fetchone()
-            referrer_id = row2[0] if row2 else None
-            level += 1
-        conn.commit()
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT referrer_id FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return
+    referrer_id = row[0]
+    level = 1
+    while referrer_id and level <= 3:
+        bonus = amount * REFERRAL_BONUS_LEVELS[level - 1]
+        if bonus > 0:
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (bonus, referrer_id))
+            cursor.execute("INSERT INTO transactions (user_id, amount, type, status) VALUES (?, ?, 'referral_bonus', 'completed')", (referrer_id, bonus))
+        cursor.execute("SELECT referrer_id FROM users WHERE user_id = ?", (referrer_id,))
+        row2 = cursor.fetchone()
+        referrer_id = row2[0] if row2 else None
+        level += 1
+    conn.commit()
+    conn.close()
 
 def create_investment(user_id: int, amount: float, package_days: int):
     package = INVEST_PACKAGES[package_days]
     end_date = datetime.now() + timedelta(days=package_days)
-    with closing(sqlite3.connect(DB_NAME)) as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO investments (user_id, amount, package_days, daily_percent, end_date)
-            VALUES (?, ?, ?, ?, ?)
-        """, (user_id, amount, package_days, package["percent"], end_date))
-        if package["bonus"] > 0:
-            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (package["bonus"], user_id))
-            cursor.execute("INSERT INTO transactions (user_id, amount, type, status) VALUES (?, ?, 'package_bonus', 'completed')", (user_id, package["bonus"]))
-        conn.commit()
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO investments (user_id, amount, package_days, daily_percent, end_date)
+        VALUES (?, ?, ?, ?, ?)
+    """, (user_id, amount, package_days, package["percent"], end_date))
+    if package["bonus"] > 0:
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (package["bonus"], user_id))
+        cursor.execute("INSERT INTO transactions (user_id, amount, type, status) VALUES (?, ?, 'package_bonus', 'completed')", (user_id, package["bonus"]))
+    conn.commit()
+    conn.close()
     process_referral_chain(user_id, amount)
 
 def calculate_daily_interest():
-    with closing(sqlite3.connect(DB_NAME)) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, user_id, amount, daily_percent FROM investments WHERE status = 'active' AND end_date > datetime('now')")
-        investments = cursor.fetchall()
-        for inv_id, user_id, amount, daily_percent in investments:
-            interest = amount * (daily_percent / 100)
-            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (interest, user_id))
-            cursor.execute("INSERT INTO transactions (user_id, amount, type, status) VALUES (?, ?, 'daily_interest', 'completed')", (user_id, interest))
-        cursor.execute("UPDATE investments SET status = 'completed' WHERE status = 'active' AND end_date <= datetime('now')")
-        conn.commit()
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, user_id, amount, daily_percent FROM investments WHERE status = 'active' AND end_date > datetime('now')")
+    investments = cursor.fetchall()
+    for inv_id, user_id, amount, daily_percent in investments:
+        interest = amount * (daily_percent / 100)
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (interest, user_id))
+        cursor.execute("INSERT INTO transactions (user_id, amount, type, status) VALUES (?, ?, 'daily_interest', 'completed')", (user_id, interest))
+    cursor.execute("UPDATE investments SET status = 'completed' WHERE status = 'active' AND end_date <= datetime('now')")
+    conn.commit()
+    conn.close()
 
 # ==================== FSM СОСТОЯНИЯ ====================
 class RegisterStates(StatesGroup):
@@ -293,10 +309,7 @@ async def process_name(message: Message, state: FSMContext):
         return
     await state.update_data(name=message.text.strip())
     await message.answer("Введите фамилию:")
-    await state.set_state(
-
-
-RegisterStates.surname)
+    await state.set_state(RegisterStates.surname)
 
 @router.message(RegisterStates.surname, F.text)
 async def process_surname(message: Message, state: FSMContext):
@@ -318,10 +331,11 @@ async def process_age(message: Message, state: FSMContext):
     user_id = message.from_user.id
     add_user(user_id, data["name"], data["surname"], age, data.get("referrer_id"), data.get("fingerprint", ""))
     if data.get("referrer_id"):
-        with closing(sqlite3.connect(DB_NAME)) as conn:
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO referrals (referrer_id, referred_id, level) VALUES (?, ?, 1)", (data["referrer_id"], user_id))
-            conn.commit()
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO referrals (referrer_id, referred_id, level) VALUES (?, ?, 1)", (data["referrer_id"], user_id))
+        conn.commit()
+        conn.close()
     await message.answer(f"Регистрация завершена! Добро пожаловать, {data['name']}!", reply_markup=main_kb(user_id))
     await state.clear()
 
@@ -401,6 +415,8 @@ async def withdraw_amount(message: Message, state: FSMContext):
         await message.answer("Введите число")
 
 @router.message(WithdrawStates.wallet)
+
+
 async def withdraw_wallet(message: Message, state: FSMContext):
     wallet = message.text.strip()
     if len(wallet) < 10:
@@ -412,10 +428,11 @@ async def withdraw_wallet(message: Message, state: FSMContext):
     net_amount = amount - fee
     user_id = message.from_user.id
     update_balance(user_id, -amount, "withdraw")
-    with closing(sqlite3.connect(DB_NAME)) as conn:
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO withdraws (user_id, amount, wallet, status) VALUES (?, ?, ?, 'pending')", (user_id, net_amount, wallet))
-        conn.commit()
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO withdraws (user_id, amount, wallet, status) VALUES (?, ?, ?, 'pending')", (user_id, net_amount, wallet))
+    conn.commit()
+    conn.close()
     await message.answer(f"Заявка на вывод {net_amount:.2f}$ (комиссия {fee:.2f}$) отправлена!")
     await state.clear()
 
@@ -429,17 +446,18 @@ async def show_referrals(message: Message):
 @router.message(F.text == "📜 История")
 async def show_history(message: Message):
     user_id = message.from_user.id
-    with closing(sqlite3.connect(DB_NAME)) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT amount, type, created_at FROM transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 10", (user_id,))
-        rows = cursor.fetchall()
-        if not rows:
-            await message.answer("История пуста")
-            return
-        text = "📜 Последние транзакции:\n\n"
-        for amount, tx_type, date in rows:
-            text += f"{date[:16]} | {tx_type}: {amount:+.2f}$\n"
-        await message.answer(text)
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT amount, type, created_at FROM transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 10", (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    if not rows:
+        await message.answer("История пуста")
+        return
+    text = "📜 Последние транзакции:\n\n"
+    for amount, tx_type, date in rows:
+        text += f"{date[:16]} | {tx_type}: {amount:+.2f}$\n"
+    await message.answer(text)
 
 @router.message(F.text == "❓ Помощь")
 async def show_help(message: Message):
@@ -458,13 +476,14 @@ async def admin_panel(message: Message):
 
 @router.callback_query(F.data == "admin_stats")
 async def admin_stats(callback: CallbackQuery):
-    with closing(sqlite3.connect(DB_NAME)) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*), SUM(balance) FROM users")
-        total_users, total_balance = cursor.fetchone()
-        cursor.execute("SELECT COUNT(*) FROM withdraws WHERE status='pending'")
-        pending = cursor.fetchone()[0]
-    text = f"Пользователей: {total_users}\nБаланс: {total_balance:.2f}$\nЗаявок на вывод: {pending}"
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*), SUM(balance) FROM users")
+    total_users, total_balance = cursor.fetchone()
+    cursor.execute("SELECT COUNT(*) FROM withdraws WHERE status='pending'")
+    pending = cursor.fetchone()[0]
+    conn.close()
+    text = f"📊 Статистика:\n👥 Пользователей: {total_users}\n💰 Баланс: {total_balance or 0:.2f}$\n⏳ Заявок на вывод: {pending}"
     await callback.message.edit_text(text)
     await callback.answer()
 
@@ -475,7 +494,7 @@ async def daily_task(bot: Bot):
         now = datetime.now()
         if now.hour == 0 and now.minute == 0:
             calculate_daily_interest()
-            print(f"Начислены проценты за {now.date()}")
+            print(f"✅ Начислены проценты за {now.date()}")
 
 async def main():
     logging.basicConfig(level=logging.INFO)
@@ -489,7 +508,7 @@ async def main():
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
     asyncio.create_task(daily_task(bot))
-    print("🚀 Бот запущен!")
+    print("🚀 Бот успешно запущен!")
     print(f"👑 Администраторы: {ADMIN_IDS}")
     await dp.start_polling(bot)
 
